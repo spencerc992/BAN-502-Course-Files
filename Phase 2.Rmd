@@ -1,0 +1,298 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+```{r}
+# load
+library(tidyverse)
+library(tidymodels)
+library(mice) #package for imputation
+library(VIM) #visualizing missingness
+library(ranger) #for random forests
+library(randomForest) #also for random forests
+library(caret)
+library(skimr)
+library(GGally)
+library(gridExtra)
+library(vip) #variable importance
+library(e1071)
+library(ROCR)
+library(rpart.plot)
+```
+
+```{r}
+# read in data
+train = read_csv("train.csv")
+```
+
+```{r}
+# data summaries
+summary(train)
+```
+
+```{r}
+# data prep
+train = train %>% mutate(failure = as_factor(failure)) %>%
+  mutate(product_code = as_factor(product_code)) %>%
+  mutate(attribute_0 = as_factor(attribute_0)) %>%
+  mutate(attribute_1 = as_factor(attribute_1)) %>%
+  mutate(attribute_2 = as_factor(attribute_2)) %>%
+  mutate(attribute_3 = as_factor(attribute_3))
+```
+
+```{r}
+# missingness
+skim(train)
+vim_plot = aggr(train, numbers = TRUE, prop = c(TRUE, FALSE), cex.axis = .7)
+drop_na(train)
+12183/26570
+# cannot use drop_na because more than half the data would be lost
+# imputation will be used instead
+
+set.seed(1234)
+imputation1 = mice(train, m=5, method='pmm', printFlag = FALSE)
+
+train = complete(imputation1)
+summary(train)
+```
+
+```{r}
+#visualizations
+p1 = ggplot(train, aes(x = product_code, fill = failure)) + geom_bar(position = "fill")
+p2 = ggplot(train, aes(x = loading, y = failure)) + geom_boxplot()
+grid.arrange(p1, p2)
+
+p3 = ggplot(train, aes(x = attribute_0, fill = failure)) + geom_bar(position = "fill")
+p4 = ggplot(train, aes(x = attribute_1, fill = failure)) + geom_bar(position = "fill")
+p5 = ggplot(train, aes(x = attribute_2, fill = failure)) + geom_bar(position = "fill")
+p6 = ggplot(train, aes(x = attribute_3, fill = failure)) + geom_bar(position = "fill")
+grid.arrange(p3, p4, p5, p6)
+
+p7 = ggplot(train, aes(x = measurement_0, y = failure)) + geom_boxplot()
+p8 = ggplot(train, aes(x = measurement_1, y = failure)) + geom_boxplot()
+p9 = ggplot(train, aes(x = measurement_2, y = failure)) + geom_boxplot()
+p10 = ggplot(train, aes(x = measurement_3, y = failure)) + geom_boxplot()
+grid.arrange(p7, p8, p9, p10)
+
+p11 = ggplot(train, aes(x = measurement_4, y = failure)) + geom_boxplot()
+p12 = ggplot(train, aes(x = measurement_5, y = failure)) + geom_boxplot()
+p13 = ggplot(train, aes(x = measurement_6, y = failure)) + geom_boxplot()
+p14 = ggplot(train, aes(x = measurement_7, y = failure)) + geom_boxplot()
+grid.arrange(p11, p12, p13, p14)
+
+p15 = ggplot(train, aes(x = measurement_8, y = failure)) + geom_boxplot()
+p16 = ggplot(train, aes(x = measurement_9, y = failure)) + geom_boxplot()
+p17 = ggplot(train, aes(x = measurement_10, y = failure)) + geom_boxplot()
+p18 = ggplot(train, aes(x = measurement_11, y = failure)) + geom_boxplot()
+grid.arrange(p15, p16, p17, p18)
+
+p19 = ggplot(train, aes(x = measurement_12, y = failure)) + geom_boxplot()
+p20 = ggplot(train, aes(x = measurement_13, y = failure)) + geom_boxplot()
+p21 = ggplot(train, aes(x = measurement_14, y = failure)) + geom_boxplot()
+p22 = ggplot(train, aes(x = measurement_15, y = failure)) + geom_boxplot()
+p23 = ggplot(train, aes(x = measurement_16, y = failure)) + geom_boxplot()
+p24 = ggplot(train, aes(x = measurement_17, y = failure)) + geom_boxplot()
+grid.arrange(p19, p20, p21, p22, p23, p24)
+```
+
+```{r}
+# logistic regression model with all variables
+log_model1 = 
+  logistic_reg() %>%
+  set_engine("glm")
+
+log_recipe1 = recipe(failure ~ ., train)
+
+log_wflow1 = workflow() %>%
+  add_recipe(log_recipe1) %>%
+  add_model(log_model1)
+
+log_fit1 = fit(log_wflow1, train)
+
+summary(log_fit1$fit$fit$fit)
+
+#logistic regression with significant variables
+log_model2 = 
+  logistic_reg() %>%
+  set_engine("glm")
+
+log_recipe2 = recipe(failure ~ product_code + loading + measurement_2 + measurement_5 + measurement_6 + measurement_7 + measurement_8, train)
+
+log_wflow2 = workflow() %>%
+  add_recipe(log_recipe2) %>%
+  add_model(log_model2)
+
+log_fit2 = fit(log_wflow2, train)
+
+summary(log_fit2$fit$fit$fit)
+```
+
+Although the attribute variables appeared to be significant in the visualizations, there were issues of multicollinearity that were identified by the model, which removed these variables.
+
+```{r}
+# ridge regression with all variables
+recipe = recipe(failure ~ ., train)
+
+ridge_model = logistic_reg(mixture = 1) %>%
+  set_engine("glm")
+
+ridge_wflow = workflow() %>% 
+  add_model(ridge_model) %>% 
+  add_recipe(recipe)
+
+ridge_fit = fit(ridge_wflow, train)
+                
+ridge_fit %>%
+  extract_fit_parsnip() %>%
+  pluck("fit")
+
+# ridge regression with significant predictor variables found in logistic regression
+recipe2 = recipe(failure ~ product_code + loading + measurement_2 + measurement_5 + measurement_6 + measurement_7 + measurement_8, train)
+
+ridge_model2 =
+  logistic_reg(mixture = 1) %>%
+  set_engine("glm")
+
+ridge_wflow2 = workflow() %>% 
+  add_model(ridge_model2) %>% 
+  add_recipe(recipe2)
+
+ridge_fit2 = fit(ridge_wflow2, train)
+                
+ridge_fit2 %>%
+  extract_fit_parsnip() %>%
+  pluck("fit")
+```
+
+The ridge regression model also removed the attribute variables due to multicollineaity issues.
+
+So far, the most accurate model that I have found uses the significant predictor variables identified in the logistic regression model and applies them to a ridge regression model. This resulted in an AIC of 27050 which is not much of an improvement on the other models, but is still slightly better.
+
+```{r}
+# classification tree
+set.seed(1234)
+folds = vfold_cv(train, v = 5)
+
+tree_recipe1 = recipe(failure ~ ., train) %>%
+  step_dummy(all_nominal(),-all_outcomes())
+
+tree_model1 = decision_tree(cost_complexity = tune()) %>%
+  set_engine("rpart", model = TRUE) %>%
+  set_mode("classification")
+
+tree_grid1 = grid_regular(cost_complexity(), levels = 25)
+
+tree_wflow1 = 
+  workflow() %>%
+  add_model(tree_model1) %>%
+  add_recipe(tree_recipe1)
+
+tree_res1 = 
+  tree_wflow1 %>%
+  tune_grid(
+    resamples = folds,
+    grid = tree_grid1
+  )
+
+tree_res1
+
+tree_res1 %>%
+  collect_metrics() %>%
+  ggplot(aes(cost_complexity, mean)) +
+  geom_line(linewidth = 1.5, alpha = 0.6) +
+  geom_point(linewidth = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2)
+
+# best tree
+best_tree = tree_res1 %>%
+  select_best(metric = "accuracy")
+
+best_tree
+
+# final tree
+tree_wflow2 =
+  tree_wflow1 %>%
+  finalize_workflow(best_tree)
+
+tree_fit2 = fit(tree_wflow2, train)
+
+tree = tree_fit2 %>%
+  extract_fit_parsnip() %>%
+  pluck("fit")
+
+rpart.plot(tree)
+
+treepred = predict(tree_fit2, train, type = "class")
+
+confusionMatrix(treepred$.pred_class, train$failure, positive = "Yes")
+```
+
+No tree was produced, only one root was, which is the same as picking every failure outcome as a "No".
+
+```{r}
+rf_recipe = recipe(failure ~., train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+rf_model = rand_forest() %>% 
+  set_engine("ranger") %>% 
+  set_mode("classification")
+
+rf_wflow = 
+  workflow() %>% 
+  add_model(rf_model) %>% 
+  add_recipe(rf_recipe)
+
+set.seed(1234)
+rf_fit = fit(rf_wflow, train)
+
+rf_fit
+
+predRF = predict(rf_fit, train)
+head(predRF)
+
+confusionMatrix(predRF$.pred_class, train$failure)
+```
+
+The random forest model had a significant increase in accuracy to 99.18% accuracy. Although this seems like it would be better, this large jump in accuracy leads me to believe that the random forest model is subject to overfitting, and therefore I will not be using it to make my predictions because it would most likely not be useful on the testing set.
+
+```{r}
+# predict on training dataset with ROC best cutoff
+trainpreds = predict(ridge_fit2, train, type = "prob")[2]
+head(trainpreds)
+
+ROCpred = prediction(trainpreds, train$failure)
+
+ROCperf = performance(ROCpred, "tpr", "fpr")
+plot(ROCperf, colorize = TRUE, print.cutoffs.at = seq(0,1,by=0.1),text.adj=c(-0.2,1.7))
+
+opt.cut = function(perf, pred) {
+  cut.ind = mapply(FUN=function(x, y, p){
+    d = (x - 0)^2 + (y - 1)^2
+    ind = which(d == min(d))
+    c(sensitivity = y[[ind]], specificity = 1-x[[ind]],
+      cutoff = p[[ind]])
+  }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+print(opt.cut(ROCperf, ROCpred))
+
+t1 = table(train$failure, trainpreds > 0.2070376)
+t1
+
+(t1[1,1]+t1[2,2]) / nrow(train)
+
+#predict on training data with ridge_fit predictions
+trainpreds2 = predict(ridge_fit2, train)
+head(trainpreds2)
+
+t2 = table(train$failure, trainpreds2$.pred_class)
+t2
+
+(t2[1,1]+t2[2,2]) / nrow(train)
+```
+
+Using the ROC best cutoff, I was only able to get an accuracy of 56.99%.
+
+However, using simply the predictions instead of the probability values for each observation found using the ridge regression model, I was able to get a 78.73% accuracy. This shows that the ridge regression model using the significant predictor variables is the best model I was able to create. It had the best accuracy and the lowest AIC.
+
+Even though this was the best model that I was able to create, it was still not able to match the naïve accuracy of 78.74% which is just slightly better than my model. Because of this, I would say that I was unsuccessful finding a significant prediction model, and would instead just use the naïve prediction.
